@@ -1,0 +1,71 @@
+name: Generate MRS files for Mihomo
+
+on:
+  schedule:
+    - cron: "30 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  generate_mrs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🔍 Checkout repo
+        uses: actions/checkout@v4
+        
+      - name: 📥 Pull Changes
+        run: git pull
+
+      - name: 💽 Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y curl wget git jq
+         
+      - name: Get Latest Mihomo Version
+        id: get_version
+        run: |
+          LATEST_RELEASE=$(curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest)
+          VERSION=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
+          echo "MIHOMO_VERSION=$VERSION" >> $GITHUB_ENV
+          DOWNLOAD_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets[] | select(.name | contains("mihomo-linux-amd64-") and endswith(".deb")) | .browser_download_url')
+          echo "MIHOMO_DOWNLOAD_URL=$DOWNLOAD_URL" >> $GITHUB_ENV
+
+      - name: 📥 Download and install Mihomo
+        run: |
+          curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -L "${{ env.MIHOMO_DOWNLOAD_URL }}" -o mihomo-linux-amd64.deb
+          sudo apt install --fix-missing ./mihomo-linux-amd64.deb
+        
+      - name: ⚙️ Generate MRS files
+        run: |
+          mkdir -p rule-sets
+          # Обработка domain-list
+          for file in lists/domain-list/*.yaml; do
+            [ -f "$file" ] || continue
+            base=$(basename "$file" .yaml)
+            mihomo convert-ruleset domain yaml "$file" "rule-sets/$base.mrs"
+          done
+          # Обработка ip-list
+          for file in lists/ip-list/*.yaml; do
+            [ -f "$file" ] || continue
+            base=$(basename "$file" .yaml)
+            mihomo convert-ruleset ipcidr yaml "$file" "rule-sets/$base.mrs"
+          done
+
+      - name: 🗑️ Delete temp file
+        run: |
+          rm mihomo-linux-amd64.deb
+          
+      - name: 📅 Get current date
+        id: date
+        run: |
+          echo "DATE=$(TZ=Europe/Moscow date +'%Y-%m-%dT%H:%M:%S')" >> $GITHUB_ENV
+      
+      - name: 📤 Commit and Push Changes
+        run: |
+          git config --local user.email "64545917+moocluck@users.noreply.github.com"
+          git config --local user.name "moocluck"
+          git add .
+          git commit -m "Generating .mrs rule-sets ${{ env.DATE }}" -a || echo "No changes to commit"
+          git push
