@@ -27,20 +27,42 @@ jobs:
          
       - name: 🔍 Get Latest Mihomo Version
         id: get_version
+        shell: bash
         run: |
-          LATEST_RELEASE=$(curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest)
-          VERSION=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
-          {
-            echo "MIHOMO_VERSION=$VERSION"
-            echo "MIHOMO_DOWNLOAD_URL<<EOF"
-            echo "$(echo "$LATEST_RELEASE" | jq -r '.assets[] | select(.name | contains("mihomo-linux-amd64-") and endswith(".deb")) | .browser_download_url')"
-            echo "EOF"
-          } >> $GITHUB_ENV
+          set -euo pipefail
+          LATEST_RELEASE="$(curl -fsSL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/MetaCubeX/mihomo/releases/latest)"
+
+          VERSION="$(jq -r '.tag_name' <<<"$LATEST_RELEASE")"
+
+          # Предпочитаем v3 → v2 → v1 → fallback на любой .deb (строго один URL)
+          URL="$(
+            jq -r '
+              # Сначала пытаемся v3, затем v2, затем v1
+              ((.assets[] | select(.name | test("^mihomo-linux-amd64-v3-.*\\.deb$")) | .browser_download_url),
+              (.assets[] | select(.name | test("^mihomo-linux-amd64-v2-.*\\.deb$")) | .browser_download_url),
+              (.assets[] | select(.name | test("^mihomo-linux-amd64-v1-.*\\.deb$")) | .browser_download_url),
+              # Если ни один из v1/v2/v3 не найден — берём любой amd64 .deb
+              (.assets[] | select(.name | test("^mihomo-linux-amd64-.*\\.deb$")) | .browser_download_url))
+              | select(.!=null)
+            ' <<<"$LATEST_RELEASE" | head -n1
+          )"
+
+          if [[ -z "${URL:-}" ]]; then
+            echo "No suitable amd64 .deb asset found in latest release" >&2
+            exit 1
+          fi
+
+          printf 'MIHOMO_VERSION=%s\n' "$VERSION" >> "$GITHUB_ENV"
+          printf 'MIHOMO_DOWNLOAD_URL=%s\n' "$URL" >> "$GITHUB_ENV"
 
       - name: 📥 Download and install Mihomo
+        shell: bash
         run: |
-          curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -L "${{ env.MIHOMO_DOWNLOAD_URL }}" -o mihomo-linux-amd64.deb
-          sudo apt install --fix-missing ./mihomo-linux-amd64.deb
+          set -euo pipefail
+          curl -fsSL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -L "${{ env.MIHOMO_DOWNLOAD_URL }}" -o mihomo-linux-amd64.deb
+          sudo dpkg -i ./mihomo-linux-amd64.deb || sudo apt-get -y -f install
         
       - name: ⚙️ Generate MRS files
         run: |
