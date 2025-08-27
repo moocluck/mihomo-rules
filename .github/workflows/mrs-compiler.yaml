@@ -30,9 +30,12 @@ jobs:
         run: |
           LATEST_RELEASE=$(curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest)
           VERSION=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
-          echo "MIHOMO_VERSION=$VERSION" >> $GITHUB_ENV
-          DOWNLOAD_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets[] | select(.name | contains("mihomo-linux-amd64-") and endswith(".deb")) | .browser_download_url')
-          echo "MIHOMO_DOWNLOAD_URL=$DOWNLOAD_URL" >> $GITHUB_ENV
+          {
+            echo "MIHOMO_VERSION=$VERSION"
+            echo "MIHOMO_DOWNLOAD_URL<<EOF"
+            echo "$(echo "$LATEST_RELEASE" | jq -r '.assets[] | select(.name | contains("mihomo-linux-amd64-") and endswith(".deb")) | .browser_download_url')"
+            echo "EOF"
+          } >> $GITHUB_ENV
 
       - name: 📥 Download and install Mihomo
         run: |
